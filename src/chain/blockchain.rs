@@ -1,6 +1,6 @@
-use crate::block::Block;
-use crate::transaction::Transaction;
-use crate::state::State;
+use crate::chain::block::Block;
+use crate::types::transaction::Transaction;
+use crate::chain::state::State;
 
 pub struct Blockchain {
     pub blocks: Vec<Block>,

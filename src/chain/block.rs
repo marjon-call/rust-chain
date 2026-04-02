@@ -1,6 +1,6 @@
 use sha2::{Sha256, Digest};
 use std::time::{SystemTime, UNIX_EPOCH};
-use crate::transaction::Transaction;
+use crate::types::transaction::Transaction;
 
 #[derive(Debug)]
 pub struct Block {

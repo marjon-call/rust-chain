@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::transaction::Transaction;
+use crate::types::transaction::Transaction;
 
 pub struct State {
     balances: HashMap<String, u128>

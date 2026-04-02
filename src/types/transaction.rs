@@ -1,6 +1,6 @@
 use k256::ecdsa::{VerifyingKey, signature::Verifier, Signature};
 
-use crate::wallet::address_from_key;
+use crate::types::wallet::address_from_key;
 
 #[derive(Debug)]
 pub struct Transaction {

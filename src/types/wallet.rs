@@ -1,6 +1,6 @@
 use k256::ecdsa::{SigningKey, VerifyingKey, Signature, signature::Signer};
 use rand::rngs::OsRng;
-use crate::transaction::Transaction;
+use crate::types::transaction::Transaction;
 use sha2::{Sha256, Digest};
 
 pub struct Wallet {

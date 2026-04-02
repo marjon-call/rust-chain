@@ -1,15 +1,14 @@
-mod block;
-mod blockchain;
-mod transaction;
-mod wallet;
-mod state;
+mod chain;
+mod network;
+mod types;
 
-use crate::blockchain::Blockchain;
-use crate::transaction::Transaction;
-use crate::wallet::Wallet;
-use crate::state::State;
+use crate::chain::blockchain::Blockchain;
+use crate::types::transaction::Transaction;
+use crate::types::wallet::Wallet;
+use crate::network::node::Node;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let mut chain = Blockchain::new();
     let alice = Wallet::new();
     let bob = Wallet::new();
@@ -39,4 +38,8 @@ fn main() {
     println!("Chain valid: {}", chain.is_valid());
 
     println!("\nEND STATE:\n Alice: {}\n Bob: {}\n Charlie: {}\n", chain.state.get_balance(&alice.address()), chain.state.get_balance(&bob.address()), chain.state.get_balance(&charlie.address()));
+
+
+    let mut node = Node::new(chain).await;
+    node.run().await;
 }
