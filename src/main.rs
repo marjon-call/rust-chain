@@ -6,15 +6,18 @@ use crate::chain::blockchain::Blockchain;
 use crate::types::transaction::Transaction;
 use crate::types::wallet::Wallet;
 use crate::network::node::Node;
+use crate::network::node::NodeCommand;
+
 
 #[tokio::main]
 async fn main() {
-    let mut chain = Blockchain::new();
+    
     let alice = Wallet::new();
     let bob = Wallet::new();
     let charlie = Wallet::new();
 
-    chain.state.mint(&alice.address(), 100);
+    let mut blockchain = Blockchain::new(&alice.address(), 1000);
+
 
     let tx1 = alice.sign(Transaction {
         from: alice.address(),
@@ -23,23 +26,24 @@ async fn main() {
         nonce: 0,
         public_key: None,
         signature: None,
+        is_coinbase: false
     });
 
 
 
-    println!("TX valid: {}\n", tx1.verify(&alice.public_key));
+    println!("TX valid: {}\n", tx1.verify());
 
-    chain.add_block(vec![tx1], &charlie.address()).unwrap();
-
-    for block in &chain.blocks {
-        println!("{:?}\n", block);
-    }
-
-    println!("Chain valid: {}", chain.is_valid());
-
-    println!("\nEND STATE:\n Alice: {}\n Bob: {}\n Charlie: {}\n", chain.state.get_balance(&alice.address()), chain.state.get_balance(&bob.address()), chain.state.get_balance(&charlie.address()));
+    let (mut node, cmd_tx) = Node::new(blockchain).await.expect("failed to create node");
+    let charlie_addr = charlie.address();
 
 
-    let mut node = Node::new(chain).await;
-    node.run().await;
+    // spawn block production as a seperate task
+    tokio::spawn(async move {
+        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+        // cmd_tx.send(NodeCommand::SubmitTx(tx1)).await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        cmd_tx.send(NodeCommand::AddBlock(charlie.address())).await.unwrap();
+    });
+
+    node.run().await.expect("node failed");
 }

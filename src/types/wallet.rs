@@ -1,4 +1,4 @@
-use k256::ecdsa::{SigningKey, VerifyingKey, Signature, signature::Signer};
+use k256::ecdsa::{SigningKey, VerifyingKey, signature::Signer};
 use rand::rngs::OsRng;
 use crate::types::transaction::Transaction;
 use sha2::{Sha256, Digest};
@@ -30,7 +30,7 @@ impl Wallet {
         let sig = self.private_key.sign(&tx_bytes);
         Transaction {
             signature: Some(sig),
-            public_key: Some(self.public_key),
+            public_key: Some(self.public_key.to_sec1_bytes().to_vec()),
             ..tx
         }
     }

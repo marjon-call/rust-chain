@@ -1,26 +1,34 @@
 use crate::chain::block::Block;
 use crate::types::transaction::Transaction;
 use crate::chain::state::State;
+use crate::chain::mempool::Mempool;
+
+pub const MAX_BLOCK_TXS: usize = 10;
 
 pub struct Blockchain {
     pub blocks: Vec<Block>,
     pub state: State,
+    pub mempool: Mempool,
 }
 
 impl Blockchain {
     // creates new blockchain instance
-    pub fn new() -> Blockchain {
-        let genesis = Block::new(0, vec![], "00000", "genesis");
+    pub fn new(initial_address: &str, initial_supply: u128) -> Blockchain {
+        let genesis = Block::new_genesis(initial_address, initial_supply);
+        let mut state = State::new();
+        state.apply_cb_transaction(&genesis.data[0]).expect("genesis coinbase failed");
         Blockchain { 
             blocks: vec![genesis],
-            state: State::new(),
+            state: state,
+            mempool: Mempool::new(),
         }
     }
 
     // adds new block to the chain
-    pub fn add_block(&mut self, data: Vec<Transaction>, miner: &str) -> Result<(), String> {
+    pub fn add_block(&mut self, miner: &str) -> Result<(), String> {
+        let txs = self.mempool.take(MAX_BLOCK_TXS);
         let prev = self.blocks.last().ok_or("chain is empty")?;
-        let mut block = Block::new(prev.index + 1, data, &prev.hash, &miner);
+        let mut block = Block::new(prev.index + 1, txs, &prev.hash, &miner)?;
 
         // verify txs & apply state changes
         for tx in &block.data {
@@ -28,7 +36,7 @@ impl Blockchain {
             match &tx.public_key {
                 None => return Err("missing public key".to_string()),
                 Some(pk) => {
-                    if !tx.verify(pk) {
+                    if !tx.verify() {
                         return Err("invalid signature".to_string());
                     }
                 }
@@ -36,8 +44,12 @@ impl Blockchain {
 
             // update
             self.state.apply_transaction(tx)?;
-            self.state.mint(miner, 100);
         }
+
+        // give miner reward
+        let coinbase = Transaction::coinbase(miner, 100);
+        block.data.push(coinbase.clone());
+        self.state.apply_cb_transaction(&coinbase)?;
 
         // mine the block
         block.mine(2);
@@ -47,6 +59,7 @@ impl Blockchain {
         }
 
         
+        // add block to chain
         self.blocks.push(block);
         Ok(())
     }
@@ -63,5 +76,42 @@ impl Blockchain {
         }
 
         true
+    }
+
+    // valiadtes the new block is valid before appending it to our chain
+    pub fn validate_and_add(&mut self, new_block: &Block) -> Result<(), String> {
+        let curr_block = self.blocks.last().ok_or("chain is empty")?;
+
+        // checks the new block has valid hash
+        if !new_block.prev_block_valid(curr_block) {
+            return Err("New block has not valid".to_string());
+        }
+
+        // validates the tx in the block
+        for tx in &new_block.data {
+            if tx.is_coinbase {
+                self.state.apply_cb_transaction(tx)?;
+            }
+            match &tx.public_key {
+                None => return Err("missing public key".to_string()),
+                Some(_) => {
+                    if !tx.verify() {
+                        return Err("invalid signature".to_string());
+                    }
+                }
+            }
+
+            // apply tx
+            self.state.apply_transaction(tx)?;
+        }
+
+        // add block to chain
+        self.blocks.push(new_block.clone());
+        Ok(())
+    }
+
+    // submits tx to the mempool
+    pub fn submit_tx(&mut self, tx: Transaction) -> Result<(), String> {
+        self.mempool.add(tx)
     }
 }
