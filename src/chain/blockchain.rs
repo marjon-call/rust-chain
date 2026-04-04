@@ -91,7 +91,9 @@ impl Blockchain {
         for tx in &new_block.data {
             if tx.is_coinbase {
                 self.state.apply_cb_transaction(tx)?;
+                continue;
             }
+            
             match &tx.public_key {
                 None => return Err("missing public key".to_string()),
                 Some(_) => {

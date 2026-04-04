@@ -1,12 +1,18 @@
 mod chain;
 mod network;
 mod types;
+mod rpc;
+
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::chain::blockchain::Blockchain;
+use crate::chain::genesis::GenesisConfig;
 use crate::types::transaction::Transaction;
 use crate::types::wallet::Wallet;
 use crate::network::node::Node;
 use crate::network::node::NodeCommand;
+use crate::rpc::server;
 
 
 #[tokio::main]
@@ -16,34 +22,18 @@ async fn main() {
     let bob = Wallet::new();
     let charlie = Wallet::new();
 
-    let mut blockchain = Blockchain::new(&alice.address(), 1000);
+    let genesis = GenesisConfig::load("genesis.json").expect("failed to load genesis.json");
+    let mut blockchain = Blockchain::new(&genesis.initial_address, genesis.initial_supply);
 
+    let shared_blockchain = Arc::new(Mutex::new(blockchain));
 
-    let tx1 = alice.sign(Transaction {
-        from: alice.address(),
-        to: bob.address(),
-        amount: 10,
-        nonce: 0,
-        public_key: None,
-        signature: None,
-        is_coinbase: false
-    });
-
-
-
-    println!("TX valid: {}\n", tx1.verify());
-
-    let (mut node, cmd_tx) = Node::new(blockchain).await.expect("failed to create node");
-    let charlie_addr = charlie.address();
-
-
-    // spawn block production as a seperate task
+    // start rpc server
+    let rpc_blockchain = Arc::clone(&shared_blockchain);
     tokio::spawn(async move {
-        tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        // cmd_tx.send(NodeCommand::SubmitTx(tx1)).await.unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-        cmd_tx.send(NodeCommand::AddBlock(charlie.address())).await.unwrap();
+        server::start(rpc_blockchain, 8545).await.expect("RPC server failed");
     });
+    
+    let (mut node, cmd_tx) = Node::new(shared_blockchain).await.expect("failed to create node");
 
     node.run().await.expect("node failed");
 }

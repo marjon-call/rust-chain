@@ -11,6 +11,8 @@ use libp2p::swarm::SwarmEvent;
 use libp2p::futures::StreamExt;
 use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 
 pub enum NodeCommand {
@@ -33,7 +35,7 @@ pub struct NodeBehaviour {
 
 pub struct Node {
     pub peer_id: PeerId,
-    pub blockchain: crate::chain::blockchain::Blockchain,
+    pub blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>,
     pub swarm: Swarm<NodeBehaviour>,
     pub topic: gossipsub::IdentTopic,
     pub sync_topic: gossipsub::IdentTopic,
@@ -45,7 +47,7 @@ pub struct Node {
 impl Node {
 
     // create a new Node instance
-    pub async fn new(blockchain: crate::chain::blockchain::Blockchain) -> Result<(Self, mpsc::Sender<NodeCommand>) , String> {
+    pub async fn new(blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>) -> Result<(Self, mpsc::Sender<NodeCommand>) , String> {
         let keypair = Keypair::generate_ed25519();
         let peer_id = PeerId::from(keypair.public());
 
@@ -120,29 +122,33 @@ impl Node {
                 cmd = self.cmd_rx.recv() => {
                     if let Some(cmd) = cmd {
                         match cmd {
+                            // adding block to chain & broadcasting if peers exist
                             NodeCommand::AddBlock(miner) => {
-                                match self.blockchain.add_block(&miner) {
-                                    Ok(_) => {
-                                        println!("Block Added");
-                                        match self.blockchain.blocks.last() {
-                                            Some(block) => {
-                                                if self.peers_connected > 0 {
-                                                    let block = block.clone();
-                                                    if let Err(e) = self.broadcast_block(&block) {
-                                                        println!("Broadcast failed {}", e);
-                                                    }
-                                                } else {
-                                                    println!("No peers connected. Skipping boradcast");
-                                                }
-                                            }
-                                            None => println!("No blocks to boradcast"),
-                                        }
+
+                                let block_result = {
+                                    let mut chain = self.blockchain.lock().await;
+                                    chain.add_block(&miner)?;
+                                    chain.blocks.last().ok_or("no blocks".to_string())?.clone()
+                                };
+
+                                println!("Block Added");
+
+                                if self.peers_connected > 0 {
+                                    if let Err(e) = self.broadcast_block(&block_result) {
+                                        println!("Broadcast failed {}", e);
                                     }
-                                    Err(e) => println!("Failed to add block: {}", e),
+                                } else {
+                                    println!("No peers connected. Skipping boradcast");
                                 }
                             }
+                            // submitting tx to mempool
                             NodeCommand::SubmitTx(tx) => {
-                                if let Err(e) = self.blockchain.submit_tx(tx.clone()) {
+                                let submit_result = {
+                                    let mut chain = self.blockchain.lock().await;
+                                    chain.submit_tx(tx.clone())
+                                };
+
+                                if let Err(e) = submit_result {
                                     println!("Failed to submit tx to mempool: {}", e);
                                 } else {
                                     if let Err(e) = self.broadcast_tx(&tx) {
@@ -192,10 +198,20 @@ impl Node {
                                 match bincode::deserialize::<NetworkMessage>(&message.data) {
                                     Ok(NetworkMessage::SyncRequest { height, .. }) => {
                                         println!("Peer request sync from height {height}");
-                                        let our_height = self.blockchain.blocks.len() as u64;
-                                        if our_height > height {
-                                            // send missing blocks
-                                            let missing: Vec<_> = self.blockchain.blocks[height as usize ..].to_vec();
+
+                                        // send missing blocks
+                                        let (our_height, missing) = {
+                                            let chain = self.blockchain.lock().await;
+                                            let our_height = chain.blocks.len() as u64;
+                                            let missing = if our_height > height {
+                                                Some(chain.blocks[height as usize..].to_vec())
+                                            } else {
+                                                None
+                                            };
+                                            (our_height, missing)
+                                        };
+
+                                        if let Some(missing) = missing {
                                             let msg = NetworkMessage::SyncResponse { 
                                                 blocks: missing,
                                                 nonce: rand::random::<u64>()
@@ -207,9 +223,19 @@ impl Node {
                                     Ok(NetworkMessage::SyncResponse { blocks, .. }) => {
                                         println!("Received {} blocks from sync", blocks.len());
                                         for block in blocks {
-                                            if let Err(e) = self.blockchain.validate_and_add(&block) {
-                                                println!("Block rejected: {} - requesting sync", e);
-                                                break;
+                                            let validate_result = {
+                                                let mut chain = self.blockchain.lock().await;
+                                                chain.validate_and_add(&block)
+                                                    .err()
+                                                    .map(|e| (e, chain.blocks.len() as u64))
+                                            };
+                                            if let Some((e, height)) = validate_result {
+                                                println!("Block rejected: {}", e);
+                                                let msg = NetworkMessage::SyncRequest { 
+                                                    height,
+                                                    nonce: rand::random::<u64>()
+                                                };
+                                                self.publish_sync(msg)?;
                                             }
                                         }
                                     }
@@ -221,10 +247,14 @@ impl Node {
                                 match bincode::deserialize::<crate::chain::block::Block>(&message.data) {
                                     Ok(block) => {
                                         println!("Received block {} from {:?}", block.index, message.source);
-                                        if let Err(e) = self.blockchain.validate_and_add(&block) {
+                                        let validate_result = {
+                                            let mut chain = self.blockchain.lock().await;
+                                            chain.validate_and_add(&block)
+                                                .err()
+                                                .map(|e| (e, chain.blocks.len() as u64))
+                                        };
+                                        if let Some((e, height)) = validate_result {
                                             println!("Block rejected: {}", e);
-                                            // requests full sync
-                                            let height = self.blockchain.blocks.len() as u64;
                                             let msg = NetworkMessage::SyncRequest { 
                                                 height,
                                                 nonce: rand::random::<u64>()
@@ -239,7 +269,11 @@ impl Node {
                                 match bincode::deserialize::<crate::types::transaction::Transaction>(&message.data) {
                                     Ok(tx) => {
                                         println!("Received tx from {:?}", message.source);
-                                        if let Err(e) = self.blockchain.submit_tx(tx) {
+                                        let result = {
+                                            let mut chain = self.blockchain.lock().await;
+                                            chain.submit_tx(tx)
+                                        };
+                                        if let Err(e) = result {
                                             println!("NODE: Failed to add tx to mempool: {}", e);
                                         }
 
@@ -255,7 +289,10 @@ impl Node {
                             self.peers_connected += 1;
 
                             // tell chain height to new peer
-                            let height = self.blockchain.blocks.len() as u64;
+                            let height = {
+                                let chain = self.blockchain.lock().await;
+                                chain.blocks.len() as u64
+                            };
                             let msg = NetworkMessage::SyncRequest { 
                                 height,
                                 nonce: rand::random::<u64>()
@@ -291,15 +328,18 @@ impl Node {
     }
 
     // adds block then broadcasts it
-    pub fn add_and_broadcast(&mut self, miner: &str) -> Result<(), String> {
-        self.blockchain.add_block(miner)?;
-        let block = self.blockchain.blocks.last().ok_or("no blocks")?.clone();
+    pub async fn add_and_broadcast(&mut self, miner: &str) -> Result<(), String> {
+        let block = {
+            let mut chain = self.blockchain.lock().await;
+            chain.add_block(miner)?;
+            chain.blocks.last().ok_or("no blocks")?.clone()
+        };
         self.broadcast_block(&block)?;
         Ok(())
     }
 
     // request sync of chain from peer
-    fn publish_sync(&mut self, msg:NetworkMessage) -> Result<(), String> {
+    pub fn publish_sync(&mut self, msg:NetworkMessage) -> Result<(), String> {
         let encoded = bincode::serialize(&msg).map_err(|e| e.to_string())?;
         match self.swarm
             .behaviour_mut()
