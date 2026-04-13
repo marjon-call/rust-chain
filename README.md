@@ -2,6 +2,8 @@
 
 A proof-of-stake L1 blockchain being built from scratch in Rust. The goal of this project is to learn L1 security by designing and implementing a production-grade L1 end-to-end — consensus, networking, state, mempool, and RPC — so that every layer of the stack is understood deeply enough to reason about its attack surface.
 
+**This project is still in active development** and is not feature-complete. Expect breaking changes, missing pieces, and rough edges.
+
 It currently includes a p2p gossip network, a mempool, block production by staked validators, and a JSON-RPC server for interacting with the chain.
 
 ## Features
