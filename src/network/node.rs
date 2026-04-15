@@ -13,7 +13,9 @@ use tokio::sync::mpsc;
 use serde::{Serialize, Deserialize};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-
+use std::collections::HashMap;
+use crate::chain::vote::Vote;
+use crate::types::wallet::Wallet;
 
 pub enum NodeCommand {
     AddBlock(String),
@@ -40,14 +42,20 @@ pub struct Node {
     pub topic: gossipsub::IdentTopic,
     pub sync_topic: gossipsub::IdentTopic,
     pub tx_topic: gossipsub::IdentTopic,
+    pub votes_topic: gossipsub::IdentTopic,
     pub cmd_rx: mpsc::Receiver<NodeCommand>,
     pub peers_connected: usize,
+    pub wallet: Option<Wallet>,
+    pub votes: HashMap<String, Vec<Vote>>
 }
 
 impl Node {
 
     // create a new Node instance
-    pub async fn new(blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>) -> Result<(Self, mpsc::Sender<NodeCommand>) , String> {
+    pub async fn new(
+        blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>,
+        wallet: Option<crate::types::wallet::Wallet>
+    ) -> Result<(Self, mpsc::Sender<NodeCommand>) , String> {
         let keypair = Keypair::generate_ed25519();
         let peer_id = PeerId::from(keypair.public());
 
@@ -107,7 +115,26 @@ impl Node {
         let tx_topic = gossipsub::IdentTopic::new("transactions");
         swarm.behaviour_mut().gossipsub.subscribe(&tx_topic).map_err(|e| e.to_string())?;
 
-        Ok( (Node { peer_id, blockchain, swarm, topic, sync_topic, tx_topic, cmd_rx, peers_connected: 0}, cmd_tx) )
+        // creates topic for validator voting
+        let votes_topic = gossipsub::IdentTopic::new("votes");
+        swarm.behaviour_mut().gossipsub.subscribe(&votes_topic).map_err(|e| e.to_string())?;
+
+        Ok( (
+            Node { 
+                peer_id, 
+                blockchain, 
+                swarm, 
+                topic, 
+                sync_topic, 
+                tx_topic, 
+                votes_topic, 
+                cmd_rx, 
+                peers_connected: 0, 
+                wallet, 
+                votes: HashMap::new()
+            }, 
+            cmd_tx
+        ) )
     }
 
     // run the node
@@ -278,7 +305,52 @@ impl Node {
                                         }
 
                                     }
-                                    Err(e) => println!("Failed to deserialize transaction: {}", e),
+                                    Err(e) => println!("NODE: Failed to deserialize transaction: {}", e),
+                                }
+                            } else if message.topic == self.votes_topic.hash() {
+                                // handle mempool broadcast
+                                match bincode::deserialize::<crate::chain::vote::Vote>(&message.data) {
+                                    Ok(vote) => {
+                                        
+                                        // verify the vote
+                                        if !vote.verify() {
+                                            println!("NODE: Received invalid vote from {}", vote.validator_address);
+                                            continue;
+                                        }
+
+                                        
+                                        let is_validator = {
+                                            let chain = self.blockchain.lock().await;
+                                            chain.state.validators.get(&vote.validator_address)
+                                                .map(|v| v.is_active)
+                                                .unwrap_or(false)
+                                        };
+                                        
+                                        // verify vote comes from validator
+                                        if !is_validator {
+                                            println!("Node: Vote from non-validator {}", vote.validator_address);
+                                            continue;
+                                        }
+
+                                        let has_voted = self.votes
+                                            .get(&vote.block_hash)
+                                            .map(|votes| votes.iter().any(|v| v.validator_address == vote.validator_address))
+                                            .unwrap_or(false);
+
+                                        // verify validator has not voted already
+                                        if has_voted {
+                                            println!("NODE: Duplicate vote from {}", vote.validator_address);
+                                            continue;
+                                        }
+
+                                        println!("Received valid vote for block {:?} from {:?}", vote.block_hash, vote.validator_address);
+                                        self.votes
+                                            .entry(vote.block_hash.clone())
+                                            .or_insert_with(Vec::new)
+                                            .push(vote);
+
+                                    }
+                                    Err(e) => println!("NODE: Failed to deserialize transaction: {}", e),
                                 }
                             }
                         }
@@ -394,5 +466,19 @@ impl Node {
                 }
             }
         })
+    }
+
+    // handles broadcasting staker votes
+    pub fn broadcast_vote(&mut self, vote: &crate::chain::vote::Vote) -> Result<(), String> {
+        let encoded = bincode::serialize(vote).map_err(|e| e.to_string())?;
+
+        match self.swarm
+            .behaviour_mut()
+            .gossipsub
+            .publish(self.votes_topic.clone(), encoded) {
+                Ok(_) => Ok(()),
+                Err(gossipsub::PublishError::InsufficientPeers) => Ok(()),
+                Err(e) => Err(e.to_string()),
+            }
     }
 }
