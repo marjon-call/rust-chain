@@ -2,6 +2,13 @@ use k256::ecdsa::{VerifyingKey, signature::Verifier, Signature};
 use serde::{Serialize, Deserialize};
 use crate::types::wallet::address_from_key;
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub enum TxType {
+    Transfer,
+    Stake,
+    Unstake,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Transaction {
     pub to: String,
@@ -11,6 +18,7 @@ pub struct Transaction {
     pub signature: Option<Signature>,
     pub public_key: Option<Vec<u8>>,
     pub is_coinbase: bool,
+    pub tx_type: TxType,
 }
 
 impl Transaction {
@@ -39,7 +47,7 @@ impl Transaction {
 
     // formats signable data for a tx
     pub fn signable_bytes(&self) -> Vec<u8> {
-        format!("{}{}{}{}", self.from, self.to, self.amount, self.nonce).into_bytes()
+        format!("{}{}{}{}{:?}", self.from, self.to, self.amount, self.nonce, self.tx_type).into_bytes()
     }
 
     // coinbase tx
@@ -52,6 +60,7 @@ impl Transaction {
             public_key: None,
             signature: None,
             is_coinbase: true,
+            tx_type: TxType::Transfer,
         }
     }
 }

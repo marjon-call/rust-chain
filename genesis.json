@@ -1,5 +1,6 @@
 {
-    "initial_address": "0000000000000000000000000000000000000001",
+    "initial_address": "f0090076474224898b1ac856772e8e7077845f40",
     "initial_supply": 1000,
+    "initial_stake": 200,
     "chain_id": 67
 }

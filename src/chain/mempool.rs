@@ -11,8 +11,14 @@ impl Mempool {
     }
 
     pub fn add(&mut self, tx: Transaction) -> Result<(), String> {
+
+        // prevents userds from forging coinbase txs
+        if tx.is_coinbase {
+            return Err("Mempool: coinbase transactions cannot be submitted externally".to_string());
+        }
+
         if !tx.verify() {
-            return Err("invalid transaction".to_string());
+            return Err("Mempool: invalid transaction".to_string());
         }
         self.pending.push(tx);
         Ok(())

@@ -1,15 +1,25 @@
 use std::collections::HashMap;
+use rand::seq::SliceRandom;
+
 use crate::types::transaction::Transaction;
+use crate::types::transaction::TxType;
+use crate::chain::validator::Validator;
+
+pub const MIN_STAKE: u128 = 100;
 
 pub struct State {
-    balances: HashMap<String, u128>
+    pub balances: HashMap<String, u128>,
+    pub validators: HashMap<String, Validator>,
 }
 
 impl State {
 
     // creates new State
     pub fn new() -> State {
-        State { balances: HashMap::new() }
+        State { 
+            balances: HashMap::new(),
+            validators: HashMap::new(),
+        }
     }
 
     // gets a user balances
@@ -25,9 +35,36 @@ impl State {
             return Err("STF".to_string());
         }
 
-        *self.balances.entry(tx.from.clone()).or_insert(0) -= tx.amount;
-        *self.balances.entry(tx.to.clone()).or_insert(0) += tx.amount;
+        if let Err(e) = self.apply_state_change(tx) {
+            println!("State change failed during sync: {}", e);
+        }
 
+        Ok(())
+    }
+
+    // applies state update
+    pub fn apply_state_change(&mut self, tx: &Transaction) -> Result<(), String> {
+        match tx.tx_type {
+            TxType::Transfer => {
+                *self.balances.entry(tx.from.clone()).or_insert(0) -= tx.amount;
+                *self.balances.entry(tx.to.clone()).or_insert(0) += tx.amount;
+            }
+            TxType::Stake => {
+                *self.balances.entry(tx.from.clone()).or_insert(0) -= tx.amount;
+                self.validators.insert(tx.from.clone(), Validator {
+                    address: tx.from.clone(),
+                    stake: tx.amount,
+                    is_active: true,
+                    last_proposed: 0,
+                });
+            }
+            TxType::Unstake => {
+                if let Some(validator) = self.validators.get_mut(&tx.from) {
+                    validator.is_active = false;
+                }
+                *self.balances.entry(tx.from.clone()).or_insert(0) += tx.amount;
+            }
+        }
         Ok(())
     }
 
@@ -43,7 +80,57 @@ impl State {
         Ok(())
     }
 
+    // mints tokens @todo remove 
     pub fn mint(&mut self, address: &str, amount: u128) {
         *self.balances.entry(address.to_string()).or_insert(0) += amount;
+    }
+
+    // adds validator to the set
+    pub fn add_validator(&mut self, address: String, stake: u128) -> Result<(), String> {
+        if stake < MIN_STAKE {
+            return Err(format!("State: minimum stake is {}", MIN_STAKE));
+        }
+
+        self.validators.insert(address.clone(), Validator {
+            address,
+            stake,
+            is_active: true,
+            last_proposed: 0,
+        });
+
+        Ok(())
+    }
+
+    // gets the active validators
+    pub fn get_active_validators(&self) -> Vec<&Validator> {
+        self.validators.values().filter(|v| v.is_active).collect()
+    }
+
+    // chooses validator for next block
+    pub fn select_validator(&self, current_block: u64) -> Option<&Validator> {
+        let mut active: Vec<&Validator> = self.validators.values()
+            .filter(|v| v.is_active && v.last_proposed < current_block)
+            .collect();
+
+        if active.is_empty() {
+            return None;
+        }
+
+        // shuffle first to remove iteration order bias
+        active.shuffle(&mut rand::thread_rng());
+
+        // weighted random selection by stake
+        let total_stake: u128 = active.iter().map(|v| v.stake).sum();
+        let mut rng = rand::random::<u128>() % total_stake;
+
+        for validator in &active {
+            if rng < validator.stake {
+                return Some(validator);
+            }
+            rng -= validator.stake;
+        }
+
+        active.last().copied()
+
     }
 }

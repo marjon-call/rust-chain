@@ -15,8 +15,10 @@ impl Blockchain {
     // creates new blockchain instance
     pub fn new(initial_address: &str, initial_supply: u128) -> Blockchain {
         let genesis = Block::new_genesis(initial_address, initial_supply);
+        println!("Genesis block hash: {}", genesis.hash);
         let mut state = State::new();
         state.apply_cb_transaction(&genesis.data[0]).expect("genesis coinbase failed");
+        state.add_validator(initial_address.to_string(), 100).expect("genesis validator failed");
         Blockchain { 
             blocks: vec![genesis],
             state: state,
@@ -82,9 +84,21 @@ impl Blockchain {
     pub fn validate_and_add(&mut self, new_block: &Block) -> Result<(), String> {
         let curr_block = self.blocks.last().ok_or("chain is empty")?;
 
+        // already have this block, ignore silently
+        if new_block.index <= curr_block.index {
+            return Ok(()); 
+        }
+
         // checks the new block has valid hash
         if !new_block.prev_block_valid(curr_block) {
-            return Err("New block has not valid".to_string());
+            println!("Block validation failed:");
+            println!("  new_block.prev_hash: {}", new_block.prev_hash);
+            println!("  curr_block.hash: {}", curr_block.hash);
+            println!("  new_block.index: {}", new_block.index);
+            println!("  curr_block.index: {}", curr_block.index);
+            println!("  new_block.hash: {}", new_block.hash);
+            println!("  computed hash: {:?}", Block::compute_hash(new_block.index, &new_block.data, &new_block.prev_hash, new_block.timestamp, new_block.nonce));
+            return Err("New block was not valid".to_string());
         }
 
         // validates the tx in the block
@@ -103,8 +117,10 @@ impl Blockchain {
                 }
             }
 
-            // apply tx
-            self.state.apply_transaction(tx)?;
+            // apply tx to state
+            if let Err(e) = self.state.apply_state_change(tx) {
+                println!("State change failed during sync: {}", e);
+            }
         }
 
         // add block to chain

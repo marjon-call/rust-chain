@@ -17,6 +17,15 @@ impl Wallet {
         Wallet { public_key, private_key }
     }
 
+    // creates a wallet instance from a private key
+    pub fn from_private_key(private_key_hex: &str) -> Result<Wallet, String> {
+        let bytes = hex::decode(private_key_hex).map_err(|e| e.to_string())?;
+        let private_key = SigningKey::from_bytes(bytes.as_slice().into())
+            .map_err(|e| e.to_string())?;
+        let public_key = VerifyingKey::from(&private_key);
+        Ok(Wallet { public_key, private_key })
+    }
+
     // gets the address from the public key
     pub fn address(&self) -> String {
         let pub_bytes = self.public_key.to_sec1_bytes();

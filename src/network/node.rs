@@ -364,4 +364,31 @@ impl Node {
                 Err(e) => Err(e.to_string()),
             }
     }
+
+    // handles validator choice and block production
+    pub fn start_block_production(blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await; //@todo replace
+                let mut chain = blockchain.lock().await;
+                if !chain.mempool.pending.is_empty() {
+                    let curr_block = chain.blocks.len() as u64;
+                    println!("Current block: {}", curr_block);
+                    let staker = match chain.state.select_validator(curr_block) {
+                        Some(v) => v.address.clone(),
+                        None => {
+                            println!("No active validators, skipping block production");
+                            continue;
+                        }
+                    };
+
+                    println!("Selected validator: {}", staker);
+                    match chain.add_block(&staker) {
+                        Ok(_) => println!("Block produced by {}", staker),
+                        Err(e) => println!("Block production failed: {}", e),
+                    }
+                }
+            }
+        })
+    }
 }

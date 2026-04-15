@@ -3,3 +3,4 @@ pub mod blockchain;
 pub mod state;
 pub mod mempool;
 pub mod genesis;
+pub mod validator;
