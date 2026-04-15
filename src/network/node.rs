@@ -366,7 +366,10 @@ impl Node {
     }
 
     // handles validator choice and block production
-    pub fn start_block_production(blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>) -> tokio::task::JoinHandle<()> {
+    pub fn start_block_production(
+        blockchain: Arc<Mutex<crate::chain::blockchain::Blockchain>>,
+        cmd_tx: mpsc::Sender<NodeCommand>
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await; //@todo replace
@@ -382,11 +385,12 @@ impl Node {
                         }
                     };
 
+                    // release lock
+                    drop(chain);
+
                     println!("Selected validator: {}", staker);
-                    match chain.add_block(&staker) {
-                        Ok(_) => println!("Block produced by {}", staker),
-                        Err(e) => println!("Block production failed: {}", e),
-                    }
+                    let _ = cmd_tx.try_send(NodeCommand::AddBlock(staker));
+                    
                 }
             }
         })

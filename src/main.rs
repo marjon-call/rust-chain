@@ -82,9 +82,10 @@ async fn main() {
         server::start(rpc_blockchain, rpc_port).await.expect("RPC server failed");
     });
 
-    let _block_production = Node::start_block_production(Arc::clone(&shared_blockchain));
+    let (mut node, cmd_tx) = Node::new(shared_blockchain.clone()).await.expect("failed to create node");
+
+    let _block_production = Node::start_block_production(Arc::clone(&shared_blockchain), cmd_tx);
     println!("Block production started");
     
-    let (mut node, cmd_tx) = Node::new(shared_blockchain).await.expect("failed to create node");
     node.run().await.expect("node failed");
 }

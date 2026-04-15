@@ -91,13 +91,6 @@ impl Blockchain {
 
         // checks the new block has valid hash
         if !new_block.prev_block_valid(curr_block) {
-            println!("Block validation failed:");
-            println!("  new_block.prev_hash: {}", new_block.prev_hash);
-            println!("  curr_block.hash: {}", curr_block.hash);
-            println!("  new_block.index: {}", new_block.index);
-            println!("  curr_block.index: {}", curr_block.index);
-            println!("  new_block.hash: {}", new_block.hash);
-            println!("  computed hash: {:?}", Block::compute_hash(new_block.index, &new_block.data, &new_block.prev_hash, new_block.timestamp, new_block.nonce));
             return Err("New block was not valid".to_string());
         }
 

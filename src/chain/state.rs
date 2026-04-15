@@ -10,6 +10,7 @@ pub const MIN_STAKE: u128 = 100;
 pub struct State {
     pub balances: HashMap<String, u128>,
     pub validators: HashMap<String, Validator>,
+    pub nonces: HashMap<String, u128>,
 }
 
 impl State {
@@ -19,6 +20,7 @@ impl State {
         State { 
             balances: HashMap::new(),
             validators: HashMap::new(),
+            nonces: HashMap::new(),
         }
     }
 
@@ -31,13 +33,23 @@ impl State {
     pub fn apply_transaction(&mut self, tx: &Transaction) -> Result<(), String> {
         let sender_balance = self.get_balance(&tx.from);
 
+        // check user's balance
         if sender_balance < tx.amount {
             return Err("STF".to_string());
+        }
+
+        // check nonce replay
+        let last_nonce = self.nonces.get(&tx.from).copied().unwrap_or(0);
+        if tx.nonce <= last_nonce && last_nonce != 0 {
+            return Err("State: invalid nonce".to_string());
         }
 
         if let Err(e) = self.apply_state_change(tx) {
             println!("State change failed during sync: {}", e);
         }
+
+        // update nonce
+        self.nonces.insert(tx.from.clone(), tx.nonce);
 
         Ok(())
     }
